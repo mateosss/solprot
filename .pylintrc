@@ -1,0 +1,10 @@
+[MESSAGES CONTROL]
+disable =
+    invalid-name, # One letter names improve readability in short scopes
+    fixme, # To-do reminders in code are not immediate concerns
+    line-too-long, # We abide to what the black formater decides
+    # TODO: The following are disabled but need to be addressed eventually
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    unnecessary-lambda-assignment,
