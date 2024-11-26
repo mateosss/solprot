@@ -4,7 +4,7 @@ from math import pi, sin, cos
 from typing import Tuple
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider, Button
 from dataclasses import dataclass
 from typing import List
 from bilinterp import interp, interp_grad, intensity
@@ -44,11 +44,25 @@ class DrawingState:
     angle: float
 
     def redraw_angle(self, angle):
-        self.angle = angle
-        tpatch = PATCH @ R(self.angle).T + self.center
+        tpatch = PATCH @ R(angle).T + self.center
         for circle, center in zip(self.circles, tpatch):
             circle.center = center
-        self.rot_circle.center = R(self.angle) @ [0, PATCH_SIZE] + self.center
+        self.rot_circle.center = R(angle) @ [0, PATCH_SIZE] + self.center
+        self.fig.canvas.draw_idle()
+        print(f"Redraw: E(θ={self.angle:.2f}) = {E(self.angle):.2f}; E(θ'={angle:.2f}) = {E(angle):.2f}")
+        self.angle = angle
+
+    def iterate_angle(self, event) -> float:
+        # tpatch1 = np.round(PATCH + C1).astype(int)
+        # tpatch2 = np.round(PATCH @ R(self.angle).T + C2).astype(int)
+        tpatch1 = PATCH + C1
+        tpatch2 = PATCH @ R(self.angle).T + C2
+        i1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
+        i2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
+        Jr = J_r(self.angle)
+        Jr_pinv = Jr / (Jr @ Jr)  # moore-penrose pseudoinverse
+        new_angle = Jr_pinv @ (i2 - i1)
+        self.redraw_angle(new_angle)
 
 
 def R(angle: float) -> Matrix2x2:
@@ -74,32 +88,30 @@ def J_r(angle) -> VectorN:
     return rows
 
 
-def r_linearized(angle: float) -> VectorN:
-    tpatch1 = np.round(PATCH + C1).astype(int)
-    tpatch2 = np.round(PATCH @ R(angle).T + C2).astype(int)
-    i1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
-    i2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
-    return i1 - i2 + J_r(angle) * angle
+# def r_linearized(angle: float) -> VectorN:
+#     tpatch1 = np.round(PATCH + C1).astype(int)
+#     tpatch2 = np.round(PATCH @ R(angle).T + C2).astype(int)
+#     i1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
+#     i2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
+#     return i1 - i2 + J_r(angle) * angle
 
 
 def r(angle: float) -> VectorN:
     tpatch1 = PATCH + C1
     tpatch2 = PATCH @ R(angle).T + C2
-    tpatch1 = np.round(tpatch1).astype(int)
-    tpatch2 = np.round(tpatch2).astype(int)
+    # tpatch1 = np.round(tpatch1).astype(int)
+    # tpatch2 = np.round(tpatch2).astype(int)
 
     # Column swap because images have shape HxW, but tpatch addresses x,y
-    intensities1 = img1[tpatch1[:, 1], tpatch1[:, 0]]
-    intensities2 = img2[tpatch2[:, 1], tpatch2[:, 0]]
+    # intensities1 = img1[tpatch1[:, 1], tpatch1[:, 0]]
+    # intensities2 = img2[tpatch2[:, 1], tpatch2[:, 0]]
+    intensities1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
+    intensities2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
     return intensities1 - intensities2
 
 
 def E(angle: float) -> float:
     return np.sum(r(angle) ** 2)
-
-
-def get_match_rotation(c1: Vector2, c2: Vector2) -> float:
-    return pi / 6
 
 
 def make_drawing(img_file: str, c: Vector2, angle: float) -> DrawingState:
@@ -124,13 +136,16 @@ def main():
     make_drawing(IMG1, C1, 0)
 
     # Reference patch
-    angle = get_match_rotation(C1, C2)
+    angle = pi / 6
     drawing = make_drawing(IMG2, C2, angle)
 
     # Optimized patch
     axangle = drawing.fig.add_axes([0.25, 0.025, 0.55, 0.03])
     freq_slider = Slider(ax=axangle, label="Angle θ", valmin=-pi, valmax=pi, valinit=0)
     freq_slider.on_changed(drawing.redraw_angle)
+    axbtn = drawing.fig.add_axes([0.025, 0.025, 0.1, 0.05])
+    opt_btn = Button(axbtn, "Step")
+    opt_btn.on_clicked(drawing.iterate_angle)
 
     plt.show()
 
