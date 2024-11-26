@@ -24,8 +24,10 @@ ROT_CIRCLE = np.array([0, PATCH_SIZE])  # Debug circle to show the rotation
 
 IMG1 = "img1.png"
 IMG2 = "img2.png"
-C1 = np.array([222.919, 137.575])
-C2 = np.array([513.16, 168.145])
+# C1 = np.array([222.919, 137.575])
+# C2 = np.array([513.16, 168.145])
+C1 = np.array([321.298, 209.150])
+C2 = np.array([598.566, 110.105])
 
 img1 = plt.imread(IMG1)
 img2 = plt.imread(IMG2)
@@ -49,19 +51,22 @@ class DrawingState:
             circle.center = center
         self.rot_circle.center = R(angle) @ [0, PATCH_SIZE] + self.center
         self.fig.canvas.draw_idle()
-        print(f"Redraw: E(θ={self.angle:.2f}) = {E(self.angle):.2f}; E(θ'={angle:.2f}) = {E(angle):.2f}")
+
+        E_a0, E_a = E(self.angle), E(angle)
+        El_a0, El_a = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
+        a0, a = self.angle, angle
+        print(f"Redraw: E(θ={a0}) = {E_a0:.2f}; E(θ'={a:.2f}) = {E_a:.2f}")
+        print(f"Linear: El(θ={a0}) = {El_a0:.2f}; El(θ'={a:.2f}) = {El_a:.2f}")
+        if E_lin(self.angle, self.angle) - E_lin(self.angle, angle) < -1e-7:
+            print(f"[WARNING] Linear error is increasing: {El_a0} -> {El_a}")
+        print()
         self.angle = angle
 
     def iterate_angle(self, event) -> float:
-        # tpatch1 = np.round(PATCH + C1).astype(int)
-        # tpatch2 = np.round(PATCH @ R(self.angle).T + C2).astype(int)
-        tpatch1 = PATCH + C1
-        tpatch2 = PATCH @ R(self.angle).T + C2
-        i1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
-        i2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
         Jr = J_r(self.angle)
         Jr_pinv = Jr / (Jr @ Jr)  # moore-penrose pseudoinverse
-        new_angle = Jr_pinv @ (i2 - i1)
+        delta = -Jr_pinv @ r(self.angle)
+        new_angle = self.angle + delta
         self.redraw_angle(new_angle)
 
 
@@ -88,26 +93,20 @@ def J_r(angle) -> VectorN:
     return rows
 
 
-# def r_linearized(angle: float) -> VectorN:
-#     tpatch1 = np.round(PATCH + C1).astype(int)
-#     tpatch2 = np.round(PATCH @ R(angle).T + C2).astype(int)
-#     i1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
-#     i2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
-#     return i1 - i2 + J_r(angle) * angle
+def r_lin(angle_0: float, angle: float) -> VectorN:
+    return r(angle_0) + J_r(angle_0) * (angle - angle_0)
+
+
+def E_lin(angle_0: float, angle: float) -> float:
+    return np.sum(r_lin(angle_0, angle) ** 2)
 
 
 def r(angle: float) -> VectorN:
     tpatch1 = PATCH + C1
     tpatch2 = PATCH @ R(angle).T + C2
-    # tpatch1 = np.round(tpatch1).astype(int)
-    # tpatch2 = np.round(tpatch2).astype(int)
-
-    # Column swap because images have shape HxW, but tpatch addresses x,y
-    # intensities1 = img1[tpatch1[:, 1], tpatch1[:, 0]]
-    # intensities2 = img2[tpatch2[:, 1], tpatch2[:, 0]]
-    intensities1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
-    intensities2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
-    return intensities1 - intensities2
+    i1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
+    i2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
+    return i1 - i2
 
 
 def E(angle: float) -> float:
