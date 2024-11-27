@@ -4,7 +4,7 @@ from math import pi, sin, cos
 from typing import Tuple
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import cm
+from matplotlib import colormaps
 from matplotlib.widgets import Slider, Button, CheckButtons
 from dataclasses import dataclass
 from typing import List
@@ -25,10 +25,10 @@ ROT_CIRCLE = np.array([0, PATCH_SIZE])  # Debug circle to show the rotation
 
 IMG1 = "images/img1.png"
 IMG2 = "images/img2.png"
-C1 = np.array([222.919, 137.575])
-C2 = np.array([513.16, 168.145])
-# C1 = np.array([321.298, 209.150])
-# C2 = np.array([598.566, 110.105])
+# C1 = np.array([222.919, 137.575])
+# C2 = np.array([513.16, 168.145])
+C1 = np.array([321.298, 209.150])
+C2 = np.array([598.566, 110.105])
 
 # IMG1 = "images/aprilgrid.png"
 # IMG2 = "images/aprilgrid30.png"
@@ -95,7 +95,7 @@ class DrawingState:
                 diff = circle._diff
                 v = abs(diff / max_diff) if diff >= 0 else -abs(diff / min_diff)
                 v = v / 2 + 0.5
-                circle.set_facecolor(cm.get_cmap("PiYG")(v))
+                circle.set_facecolor(colormaps["PiYG"](v))
 
     def redraw_angle(self, angle):
         tpatch = PATCH @ R(angle).T + self.center
@@ -106,6 +106,7 @@ class DrawingState:
         e0, e = E(self.angle), E(angle)
         l0, l = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
         a0, a = self.angle, angle
+        self.text.set_text(f"E(θ={a:.2f})={e:.2f} <- NEW\nE(θ={a0:.2f})={e0:.2f} <- OLD")
         # print(f"Redraw: E(θ={a0}) = {e0:.2f}; E(θ'={a:.2f}) = {e:.2f}")
         # print(f"Linear: El(θ={a0}) = {l0:.2f}; El(θ'={a:.2f}) = {l:.2f}")
         # if E_lin(self.angle, self.angle) - E_lin(self.angle, angle) < -1e-7:
@@ -214,6 +215,10 @@ def main():
         check.eventson = True
 
     check.on_clicked(check_cb)
+
+    axtext = drawing.fig.add_axes([0.2, 0.85, 0.2, 0.1])
+    drawing.text = axtext.text(0, 0.5, "E(θ=___)=___",  ha="left", va="bottom")
+    axtext.axis("off")
 
     axbtn = drawing.fig.add_axes([0.025, 0.025, 0.1, 0.05])
     opt_btn = Button(axbtn, "Step")
