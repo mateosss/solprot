@@ -91,7 +91,8 @@ class DrawingState:
         elif self.fill == "Residual":
             min_diff = -0.1
             max_diff = 0.1
-            for circle in self.circles:
+            diffs = [0] * len(self.circles)
+            for i, circle in enumerate(self.circles):
                 center2 = circle.center
                 center1 = R(self.angle).T @ (center2 - C2) + C1
                 color2 = interp(img2_raw, center2[0], center2[1])
@@ -99,9 +100,8 @@ class DrawingState:
                 diff = color1 - color2
                 min_diff = min(min_diff, diff)
                 max_diff = max(max_diff, diff)
-                circle._diff = diff
-            for circle in self.circles:
-                diff = circle._diff
+                diffs[i] = diff
+            for diff, circle in zip(diffs, self.circles):
                 v = abs(diff / max_diff) if diff >= 0 else -abs(diff / min_diff)
                 v = v / 2 + 0.5
                 circle.set_facecolor(colormaps["PiYG"](v))
@@ -124,11 +124,18 @@ class DrawingState:
         self.update_fill()
         self.fig.canvas.draw_idle()
 
-    def iterate_angle(self, event) -> float:
+    def iterate_angle_gn(self, event) -> float:  # Gauss newton
         Jr = J_r(self.angle)
         Jr_pinv = Jr / (Jr @ Jr)  # moore-penrose pseudoinverse
         delta = -Jr_pinv @ r(self.angle)
         new_angle = self.angle + delta
+        self.redraw_angle(new_angle)
+
+    def iterate_angle_gd(self, event) -> float:
+        # TODO: Implement momentum
+        lr = 0.1
+        new_angle = self.angle + lr * J_E(self.angle) * self.angle
+        # new_angle = self.angle + lr * J_E(self.angle) * self.angle
         self.redraw_angle(new_angle)
 
 
@@ -175,6 +182,10 @@ def E(angle: float) -> float:
     return np.sum(r(angle) ** 2)
 
 
+def J_E(angle: float) -> float:
+    return 2 * (r(angle) @ J_r(angle))
+
+
 def make_drawing(img_file: str, c: Vector2, angle: float) -> DrawingState:
     img = plt.imread(img_file)
     img_raw = np.array(PIL.Image.open(img_file))
@@ -206,7 +217,7 @@ def main():
     freq_slider = Slider(ax=axangle, label="Angle θ", valmin=-pi, valmax=pi, valinit=0)
     freq_slider.on_changed(drawing.redraw_angle)
 
-    axchecks = drawing.fig.add_axes([0.025, 0.1, 0.1, 0.2])
+    axchecks = drawing.fig.add_axes([0.025, 0.15, 0.1, 0.2])
     check_labels = ["None", "Sample", "Grad", "Reference", "Residual"]
     actives = [True] + [False] * (len(check_labels) - 1)
     check = CheckButtons(ax=axchecks, labels=check_labels, actives=actives)
@@ -226,9 +237,13 @@ def main():
     drawing.text = axtext.text(0, 0.5, "E(θ=___)=___", ha="left", va="bottom")
     axtext.axis("off")
 
-    axbtn = drawing.fig.add_axes([0.025, 0.025, 0.1, 0.05])
-    opt_btn = Button(axbtn, "Step")
-    opt_btn.on_clicked(drawing.iterate_angle)
+    axgd = drawing.fig.add_axes([0.025, 0.085, 0.1, 0.05])
+    btngd = Button(axgd, "Step GD")
+    btngd.on_clicked(drawing.iterate_angle_gd)
+
+    axgn = drawing.fig.add_axes([0.025, 0.025, 0.1, 0.05])
+    btngn = Button(axgn, "Step GN")
+    btngn.on_clicked(drawing.iterate_angle_gn)
 
     plt.show()
 
