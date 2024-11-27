@@ -4,7 +4,8 @@ from math import pi, sin, cos
 from typing import Tuple
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Button
+from matplotlib import cm
+from matplotlib.widgets import Slider, Button, CheckButtons
 from dataclasses import dataclass
 from typing import List
 from bilinterp import interp, interp_grad, intensity
@@ -22,12 +23,18 @@ PATCH: MatrixNx2 = np.array([[x, y] for x in PATCH_RANGE() for y in PATCH_RANGE(
 ZOOM_PAD = 32
 ROT_CIRCLE = np.array([0, PATCH_SIZE])  # Debug circle to show the rotation
 
-IMG1 = "img1.png"
-IMG2 = "img2.png"
-# C1 = np.array([222.919, 137.575])
-# C2 = np.array([513.16, 168.145])
-C1 = np.array([321.298, 209.150])
-C2 = np.array([598.566, 110.105])
+IMG1 = "images/img1.png"
+IMG2 = "images/img2.png"
+C1 = np.array([222.919, 137.575])
+C2 = np.array([513.16, 168.145])
+# C1 = np.array([321.298, 209.150])
+# C2 = np.array([598.566, 110.105])
+
+# IMG1 = "images/aprilgrid.png"
+# IMG2 = "images/aprilgrid30.png"
+# C1 = np.array([148.775, 137.947])
+# C2 = np.array([182.983, 114.219])
+
 
 img1 = plt.imread(IMG1)
 img2 = plt.imread(IMG2)
@@ -39,28 +46,75 @@ img2_raw = np.array(PIL.Image.open(IMG2))
 class DrawingState:
     fig: plt.Figure
     ax: plt.Axes
-    img: Image
+    img: Image  # float32 0-1
+    img_raw: Image  # uint8 0-255
     circles: List[plt.Circle]
     rot_circle: plt.Circle
     center: Vector2
     angle: float
+    fill: str = "None"
+
+    def set_fill(self, fill: str):
+        if fill == "None":
+            for circle in self.circles:
+                circle.set_facecolor("none")
+                circle.set_edgecolor("r")
+        elif fill in ["Sample", "Reference", "Residual"]:
+            for circle in self.circles:
+                circle.set_edgecolor("none")
+        else:
+            raise ValueError(f"Unknown fill '{self.fill}'")
+        self.fill = fill
+        self.update_fill()
+
+    def update_fill(self):
+        if self.fill == "Sample":
+            for circle in self.circles:
+                color = interp(self.img_raw, circle.center[0], circle.center[1])
+                circle.set_facecolor(f"{color}")
+        if self.fill == "Reference":
+            for circle in self.circles:
+                center2 = circle.center
+                center1 = R(self.angle).T @ (center2 - C2) + C1
+                # color2 = interp(img2_raw, center2[0], center2[1])
+                color1 = interp(img1_raw, center1[0], center1[1])
+                circle.set_facecolor(f"{color1}")
+        elif self.fill == "Residual":
+            min_diff = -0.1
+            max_diff = 0.1
+            for circle in self.circles:
+                center2 = circle.center
+                center1 = R(self.angle).T @ (center2 - C2) + C1
+                color2 = interp(img2_raw, center2[0], center2[1])
+                color1 = interp(img1_raw, center1[0], center1[1])
+                diff = color1 - color2
+                min_diff = min(min_diff, diff)
+                max_diff = max(max_diff, diff)
+                circle._diff = diff
+            for circle in self.circles:
+                diff = circle._diff
+                v = abs(diff / max_diff) if diff >= 0 else -abs(diff / min_diff)
+                v = v / 2 + 0.5
+                circle.set_facecolor(cm.get_cmap("PiYG")(v))
 
     def redraw_angle(self, angle):
         tpatch = PATCH @ R(angle).T + self.center
         for circle, center in zip(self.circles, tpatch):
             circle.center = center
         self.rot_circle.center = R(angle) @ [0, PATCH_SIZE] + self.center
-        self.fig.canvas.draw_idle()
 
-        E_a0, E_a = E(self.angle), E(angle)
-        El_a0, El_a = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
+        e0, e = E(self.angle), E(angle)
+        l0, l = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
         a0, a = self.angle, angle
-        print(f"Redraw: E(θ={a0}) = {E_a0:.2f}; E(θ'={a:.2f}) = {E_a:.2f}")
-        print(f"Linear: El(θ={a0}) = {El_a0:.2f}; El(θ'={a:.2f}) = {El_a:.2f}")
-        if E_lin(self.angle, self.angle) - E_lin(self.angle, angle) < -1e-7:
-            print(f"[WARNING] Linear error is increasing: {El_a0} -> {El_a}")
-        print()
+        # print(f"Redraw: E(θ={a0}) = {e0:.2f}; E(θ'={a:.2f}) = {e:.2f}")
+        # print(f"Linear: El(θ={a0}) = {l0:.2f}; El(θ'={a:.2f}) = {l:.2f}")
+        # if E_lin(self.angle, self.angle) - E_lin(self.angle, angle) < -1e-7:
+        # print(f"[WARNING] Linear error is increasing: {l0} -> {l}")
+        # print()
+
         self.angle = angle
+        self.update_fill()
+        self.fig.canvas.draw_idle()
 
     def iterate_angle(self, event) -> float:
         Jr = J_r(self.angle)
@@ -115,6 +169,7 @@ def E(angle: float) -> float:
 
 def make_drawing(img_file: str, c: Vector2, angle: float) -> DrawingState:
     img = plt.imread(img_file)
+    img_raw = np.array(PIL.Image.open(img_file))
     fig, ax = plt.subplots()
     ax.set_xlim(c[0] - ZOOM_PAD, c[0] + ZOOM_PAD)
     ax.set_ylim(c[1] + ZOOM_PAD, c[1] - ZOOM_PAD)
@@ -127,7 +182,7 @@ def make_drawing(img_file: str, c: Vector2, angle: float) -> DrawingState:
         ax.add_patch(circle)
     rot_circle = plt.Circle(R(angle) @ ROT_CIRCLE + c, 0.5, **circle_kwargs)
     ax.add_patch(rot_circle)
-    state = DrawingState(fig, ax, img, circles, rot_circle, c, angle)
+    state = DrawingState(fig, ax, img, img_raw, circles, rot_circle, c, angle)
     return state
 
 
@@ -142,6 +197,24 @@ def main():
     axangle = drawing.fig.add_axes([0.25, 0.025, 0.55, 0.03])
     freq_slider = Slider(ax=axangle, label="Angle θ", valmin=-pi, valmax=pi, valinit=0)
     freq_slider.on_changed(drawing.redraw_angle)
+
+    axchecks = drawing.fig.add_axes([0.025, 0.1, 0.1, 0.15])
+    check_labels = ["None", "Sample", "Reference", "Residual"]
+    check = CheckButtons(
+        ax=axchecks, labels=check_labels, actives=[True, False, False, False]
+    )
+
+    def check_cb(label):
+        print(f"Checked {label}")
+        check.eventson = False
+        check.clear()
+        check.set_active(check_labels.index(label))
+        drawing.set_fill(label)
+        drawing.fig.canvas.draw_idle()
+        check.eventson = True
+
+    check.on_clicked(check_cb)
+
     axbtn = drawing.fig.add_axes([0.025, 0.025, 0.1, 0.05])
     opt_btn = Button(axbtn, "Step")
     opt_btn.on_clicked(drawing.iterate_angle)
