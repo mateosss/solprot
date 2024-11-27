@@ -59,7 +59,7 @@ class DrawingState:
             for circle in self.circles:
                 circle.set_facecolor("none")
                 circle.set_edgecolor("r")
-        elif fill in ["Sample", "Reference", "Residual"]:
+        elif fill in ["Sample", "Grad", "Reference", "Residual"]:
             for circle in self.circles:
                 circle.set_edgecolor("none")
         else:
@@ -72,6 +72,15 @@ class DrawingState:
             for circle in self.circles:
                 color = interp(self.img_raw, circle.center[0], circle.center[1])
                 circle.set_facecolor(f"{color}")
+        if self.fill == "Grad":
+            for circle in self.circles:
+                grad: Vector2 = np.array([0, 0], dtype=np.float32)
+                color = interp_grad(
+                    self.img_raw, circle.center[0], circle.center[1], grad
+                )
+                grad = grad / 2 + 0.5  # Normalize from [-1, 1] to [0, 1]
+                # circle.set_facecolor((grad[0], grad[1], color))
+                circle.set_facecolor((grad[0], grad[1], 0.0))
         if self.fill == "Reference":
             for circle in self.circles:
                 center2 = circle.center
@@ -106,12 +115,10 @@ class DrawingState:
         e0, e = E(self.angle), E(angle)
         l0, l = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
         a0, a = self.angle, angle
-        self.text.set_text(f"E(θ={a:.2f})={e:.2f} <- NEW\nE(θ={a0:.2f})={e0:.2f} <- OLD")
-        # print(f"Redraw: E(θ={a0}) = {e0:.2f}; E(θ'={a:.2f}) = {e:.2f}")
-        # print(f"Linear: El(θ={a0}) = {l0:.2f}; El(θ'={a:.2f}) = {l:.2f}")
-        # if E_lin(self.angle, self.angle) - E_lin(self.angle, angle) < -1e-7:
-        # print(f"[WARNING] Linear error is increasing: {l0} -> {l}")
-        # print()
+        self.text.set_text(
+            f"E(θ={a:.2f})={e:.2f} <- NEW | LIN -> El(θ={a:.2f})={l:.2f}\n"
+            f"E(θ={a0:.2f})={e0:.2f} <- OLD | LIN -> El(θ={a0:.2f})={l0:.2f}\n"
+        )
 
         self.angle = angle
         self.update_fill()
@@ -199,11 +206,10 @@ def main():
     freq_slider = Slider(ax=axangle, label="Angle θ", valmin=-pi, valmax=pi, valinit=0)
     freq_slider.on_changed(drawing.redraw_angle)
 
-    axchecks = drawing.fig.add_axes([0.025, 0.1, 0.1, 0.15])
-    check_labels = ["None", "Sample", "Reference", "Residual"]
-    check = CheckButtons(
-        ax=axchecks, labels=check_labels, actives=[True, False, False, False]
-    )
+    axchecks = drawing.fig.add_axes([0.025, 0.1, 0.1, 0.2])
+    check_labels = ["None", "Sample", "Grad", "Reference", "Residual"]
+    actives = [True] + [False] * (len(check_labels) - 1)
+    check = CheckButtons(ax=axchecks, labels=check_labels, actives=actives)
 
     def check_cb(label):
         print(f"Checked {label}")
@@ -217,7 +223,7 @@ def main():
     check.on_clicked(check_cb)
 
     axtext = drawing.fig.add_axes([0.2, 0.85, 0.2, 0.1])
-    drawing.text = axtext.text(0, 0.5, "E(θ=___)=___",  ha="left", va="bottom")
+    drawing.text = axtext.text(0, 0.5, "E(θ=___)=___", ha="left", va="bottom")
     axtext.axis("off")
 
     axbtn = drawing.fig.add_axes([0.025, 0.025, 0.1, 0.05])
