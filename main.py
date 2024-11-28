@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
-from math import pi, sin, cos, log, e
+from math import pi, sin, cos, e
+from dataclasses import dataclass
+from typing import List
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
 from matplotlib.widgets import Slider, Button, CheckButtons
-from dataclasses import dataclass
-from typing import List
-from bilinterp import interp, interp_grad, intensity
+from scipy.optimize import brute, differential_evolution
 import PIL.Image
+
+from bilinterp import interp, interp_grad, intensity
 
 type Vector2 = np.ndarray
 type VectorN = np.ndarray
@@ -16,60 +19,60 @@ type Image = np.ndarray
 type MatrixNx2 = np.ndarray
 type Matrix2x2 = np.ndarray
 
-# Square patch
-PATCH_SIZE = 10
-PATCH_RANGE = lambda: range(-PATCH_SIZE // 2, PATCH_SIZE // 2 + 1)
-PATCH: MatrixNx2 = np.array([[x, y] for x in PATCH_RANGE() for y in PATCH_RANGE()])
-ROT_CIRCLE = np.array([0, PATCH_SIZE])  # Debug circle to show the rotation
 
-# Square patch condensed towards the center with a cubic function
-# PATCH_SIZE = 10
-# f = lambda x: x ** 3
-# PATCH_RANGE = lambda: f(np.linspace(-1, 1, PATCH_SIZE_P)) * PATCH_RADIUS_PX
-# PATCH: MatrixNx2 = np.array([[x, y] for x in PATCH_RANGE() for y in PATCH_RANGE()])
-# ROT_CIRCLE = np.array([0, PATCH_SIZE])  # Debug circle to show the rotation
+def get_square_patch(patch_size=10):
+    "Square patch"
+    prange = lambda: range(-patch_size // 2, patch_size // 2 + 1)
+    patch: MatrixNx2 = np.array([[x, y] for x in prange() for y in prange()])
+    rot_circle = np.array([0, patch_size])
+    return patch, rot_circle
 
-# Square patch condensed towards the center with a inverse sigmoid function
-# PATCH_RADIUS_P = 3
-# PATCH_SIZE_P = 2 * PATCH_RADIUS_P + 1
-# PATCH_RADIUS_PX = 10
-# PATCH_SIZE_PX = 2 * PATCH_RADIUS_PX
-# f = lambda x: np.log(1 / (x / 2 + 0.5) - 1) / -5  # Makes the [-1, 1] denser around 0
-# ONE = (1 / (e**-5 + 1) - 0.5) * 2  # f(ONE) == 1
-# PATCH_RANGE = lambda: f(np.linspace(-ONE, ONE, PATCH_SIZE)) * PATCH_RADIUS
-# ROT_CIRCLE = np.array([0, PATCH_RADIUS_PX * 2.5])  # Debug circle to show the rotation
 
-# Circle patch
-# RADIUS = 5
-# ANGLES = 6
-# PATCH = np.array(
-#     [
-#         [cos(a) * s, sin(a) * s]
-#         for s in np.linspace(1, RADIUS, RADIUS)
-#         for a in np.linspace(0, 2 * pi, int(ANGLES * s), endpoint=False)
-#     ]
-# )
-# ROT_CIRCLE = np.array([0, RADIUS * 2.5])  # Debug circle to show the rotation
+def get_squared_patch_cubically_condensed(patch_size_p=10, patch_radius_px=10):
+    "Square patch condensed towards the center with a cubic function"
+    f = lambda x: x**3
+    prange = lambda: f(np.linspace(-1, 1, patch_size_p)) * patch_radius_px
+    patch: MatrixNx2 = np.array([[x, y] for x in prange() for y in prange()])
+    rot_circle = np.array([0, patch_radius_px * 2.5])
+    return patch, rot_circle
+
+
+def get_squared_patch_log_condensed(PATCH_RADIUS_P=3, patch_radius_px=10):
+    "Square patch condensed towards the center with a inverse sigmoid function"
+    patch_size_p = 2 * PATCH_RADIUS_P + 1
+    f = lambda x: np.log(1 / (x / 2 + 0.5) - 1) / -5  # Attract towards 0
+    ONE = (1 / (e**-5 + 1) - 0.5) * 2  # f(ONE) == 1
+    prange = lambda: f(np.linspace(-ONE, ONE, patch_size_p)) * patch_radius_px
+    patch: MatrixNx2 = np.array([[x, y] for x in prange() for y in prange()])
+    rot_circle = np.array([0, patch_radius_px * 2.5])
+    return patch, rot_circle
+
+
+def get_circle_patch(RADIUS=5, ANGLES=6, SCALE=2):
+    "Circle patch"
+    patch = np.array(
+        [
+            [cos(a) * s * SCALE, sin(a) * s * SCALE]
+            for s in np.linspace(1, RADIUS, RADIUS)
+            for a in np.linspace(0, 2 * pi, int(ANGLES * s), endpoint=False)
+        ]
+    )
+    rot_circle = np.array([0, RADIUS * 2.5])
+    return patch, rot_circle
+
+
+# fmt: off
+EXAMPLES = [
+    ("images/img1.png", "images/img2.png", np.array([321.298, 209.150]), np.array([598.566, 110.105])),
+    ("images/img1.png", "images/img2.png", np.array([222.919, 137.575]), np.array([513.16, 168.145])),
+    ("images/aprilgrid.png", "images/aprilgrid15.png", np.array([148.775, 137.947]), np.array([182.983, 114.219])),
+    ("images/aprilgrid.png", "images/aprilgrid60.png", np.array([364.5, 67.5]), np.array([470.68, 254.27])),
+]
+# fmt: on
 
 ZOOM_PAD = 32
-
-# IMG1 = "images/img1.png"
-# IMG2 = "images/img2.png"
-# C1 = np.array([222.919, 137.575])
-# C2 = np.array([513.16, 168.145])
-# C1 = np.array([321.298, 209.150])
-# C2 = np.array([598.566, 110.105])
-
-# IMG1 = "images/aprilgrid.png"
-# IMG2 = "images/aprilgrid15.png"
-# C1 = np.array([148.775, 137.947])
-# C2 = np.array([182.983, 114.219])
-
-IMG1 = "images/aprilgrid.png"
-IMG2 = "images/aprilgrid60.png"
-C1 = np.array([364.5, 67.5])
-C2 = np.array([470.68, 254.27])
-
+IMG1, IMG2, C1, C2 = EXAMPLES[3]
+PATCH, ROT_CIRCLE = get_circle_patch()
 
 img1 = plt.imread(IMG1)
 img2 = plt.imread(IMG2)
@@ -147,42 +150,45 @@ class DrawingState:
             circle.center = center
         self.rot_circle.center = R(angle) @ ROT_CIRCLE + self.center
 
-        e0, e = E(self.angle), E(angle)
+        er0, er = E(self.angle), E(angle)
         l0, l = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
         a0, a = self.angle, angle
         self.text.set_text(
-            f"E(θ={a:.2f})={e:.2f} <- NEW | LIN -> El(θ={a:.2f})={l:.2f}\n"
-            f"E(θ={a0:.2f})={e0:.2f} <- OLD | LIN -> El(θ={a0:.2f})={l0:.2f}\n"
+            f"E(θ={a:.2f})={er:.2f} <- NEW | LIN -> El(θ={a:.2f})={l:.2f}\n"
+            f"E(θ={a0:.2f})={er0:.2f} <- OLD | LIN -> El(θ={a0:.2f})={l0:.2f}\n"
         )
 
         self.angle = angle
         self.update_fill()
         self.fig.canvas.draw_idle()
 
-    def iterate_angle_gn(self, event) -> float:  # Gauss newton
+    def iterate_angle_gn(self, _) -> float:  # Gauss newton
         Jr = J_r(self.angle)
         Jr_pinv = Jr / (Jr @ Jr)  # moore-penrose pseudoinverse
         delta = -Jr_pinv @ r(self.angle)
         new_angle = self.angle + delta
         self.redraw_angle(new_angle)
 
-    def iterate_angle_scipy(self, event) -> float:
-        from scipy.optimize import basinhopping
+    def iterate_angle_scipy(self, _) -> float:
+        # Brute global optimization (15ms for 100 iterations)
+        res = brute(E, ((-pi, pi),), Ns=100, full_output=True, finish=None)
+        new_angle = res[0]
 
-        res = basinhopping(E, self.angle, minimizer_kwargs={"method": "L-BFGS-B"})
-        new_angle = res.x[0]
+        # Differential evolution global optimization (15ms)
+        # res = differential_evolution(E, [(-pi, pi)], disp=True)
+        # new_angle = res.x[0]
+
         self.redraw_angle(new_angle)
 
     lr = 0.1
     momentum = 0.5
     prev_delta = 0
 
-    def iterate_angle_gd(self, event) -> float:
-        for i in range(100):
-            delta = self.lr * J_E(self.angle) - self.momentum * self.prev_delta
-            new_angle = self.angle - delta
-            self.prev_delta = delta
-            print(f"{J_E(self.angle)=:.5f}, {delta=:.5f}")
+    def iterate_angle_gd(self, _) -> float:
+        delta = self.lr * J_E(self.angle) - self.momentum * self.prev_delta
+        new_angle = self.angle - delta
+        self.prev_delta = delta
+        print(f"{J_E(self.angle)=:.5f}, {delta=:.5f}")
         self.redraw_angle(new_angle)
 
 
