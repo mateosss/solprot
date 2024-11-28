@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - -I/home/mateo/.virtualenvs/board/lib/python3.13/site-packages/pybind11/include
+    - -I/usr/include/python3.13
+    - -I/usr/include/eigen3
+    - -I/storage/local/ssd/mayom/.virtualenvs/v13/lib/python3.13/site-packages/pybind11/include
+    - -I/storage/local/ssd/mayom/Documents/apps/oxrinstall/include/python3.13

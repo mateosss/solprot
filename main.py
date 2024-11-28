@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# https://answers.opencv.org/question/232700/calculate-orb-descriptors-for-arbitrary-image-points/
+
 from math import pi, sin, cos, e
 from dataclasses import dataclass
 from typing import List
@@ -72,7 +74,7 @@ EXAMPLES = [
 
 ZOOM_PAD = 32
 IMG1, IMG2, C1, C2 = EXAMPLES[3]
-PATCH, ROT_CIRCLE = get_circle_patch()
+PATCH, ROT_CIRCLE = get_square_patch()
 
 img1 = plt.imread(IMG1)
 img2 = plt.imread(IMG2)
@@ -153,9 +155,16 @@ class DrawingState:
         er0, er = E(self.angle), E(angle)
         l0, l = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
         a0, a = self.angle, angle
+
+        Jr = J_r(angle)
+        Jr_pinv = Jr / (Jr @ Jr)  # moore-penrose pseudoinverse
+        delta = -Jr_pinv @ r(angle)
+        delta_gd = J_E(self.angle)
+
+        delta_numeric = (E(self.angle + pi/180) - E(self.angle - pi/180)) / (2 * pi/180)
         self.text.set_text(
-            f"E(θ={a:.2f})={er:.2f} <- NEW | LIN -> El(θ={a:.2f})={l:.2f}\n"
-            f"E(θ={a0:.2f})={er0:.2f} <- OLD | LIN -> El(θ={a0:.2f})={l0:.2f}\n"
+            f"E(θ={a:.2f})={er:.2f} <- NEW | LIN -> El(θ={a:.2f})={l:.2f} | next dθ[GN] = {delta:2f}\n"
+            f"E(θ={a0:.2f})={er0:.2f} <- OLD | LIN -> El(θ={a0:.2f})={l0:.2f} | next dθ[GD] = {delta_gd:.2f} | next dθ[NUM] = {delta_numeric:.2f}\n"
         )
 
         self.angle = angle
