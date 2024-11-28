@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
-from math import pi, sin, cos
-from typing import Tuple
+from math import pi, sin, cos, log, e
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
@@ -17,23 +16,59 @@ type Image = np.ndarray
 type MatrixNx2 = np.ndarray
 type Matrix2x2 = np.ndarray
 
+# Square patch
 PATCH_SIZE = 10
 PATCH_RANGE = lambda: range(-PATCH_SIZE // 2, PATCH_SIZE // 2 + 1)
 PATCH: MatrixNx2 = np.array([[x, y] for x in PATCH_RANGE() for y in PATCH_RANGE()])
-ZOOM_PAD = 32
 ROT_CIRCLE = np.array([0, PATCH_SIZE])  # Debug circle to show the rotation
 
-IMG1 = "images/img1.png"
-IMG2 = "images/img2.png"
+# Square patch condensed towards the center with a cubic function
+# PATCH_SIZE = 10
+# f = lambda x: x ** 3
+# PATCH_RANGE = lambda: f(np.linspace(-1, 1, PATCH_SIZE_P)) * PATCH_RADIUS_PX
+# PATCH: MatrixNx2 = np.array([[x, y] for x in PATCH_RANGE() for y in PATCH_RANGE()])
+# ROT_CIRCLE = np.array([0, PATCH_SIZE])  # Debug circle to show the rotation
+
+# Square patch condensed towards the center with a inverse sigmoid function
+# PATCH_RADIUS_P = 3
+# PATCH_SIZE_P = 2 * PATCH_RADIUS_P + 1
+# PATCH_RADIUS_PX = 10
+# PATCH_SIZE_PX = 2 * PATCH_RADIUS_PX
+# f = lambda x: np.log(1 / (x / 2 + 0.5) - 1) / -5  # Makes the [-1, 1] denser around 0
+# ONE = (1 / (e**-5 + 1) - 0.5) * 2  # f(ONE) == 1
+# PATCH_RANGE = lambda: f(np.linspace(-ONE, ONE, PATCH_SIZE)) * PATCH_RADIUS
+# ROT_CIRCLE = np.array([0, PATCH_RADIUS_PX * 2.5])  # Debug circle to show the rotation
+
+# Circle patch
+# RADIUS = 5
+# ANGLES = 6
+# PATCH = np.array(
+#     [
+#         [cos(a) * s, sin(a) * s]
+#         for s in np.linspace(1, RADIUS, RADIUS)
+#         for a in np.linspace(0, 2 * pi, int(ANGLES * s), endpoint=False)
+#     ]
+# )
+# ROT_CIRCLE = np.array([0, RADIUS * 2.5])  # Debug circle to show the rotation
+
+ZOOM_PAD = 32
+
+# IMG1 = "images/img1.png"
+# IMG2 = "images/img2.png"
 # C1 = np.array([222.919, 137.575])
 # C2 = np.array([513.16, 168.145])
-C1 = np.array([321.298, 209.150])
-C2 = np.array([598.566, 110.105])
+# C1 = np.array([321.298, 209.150])
+# C2 = np.array([598.566, 110.105])
 
 # IMG1 = "images/aprilgrid.png"
-# IMG2 = "images/aprilgrid30.png"
+# IMG2 = "images/aprilgrid15.png"
 # C1 = np.array([148.775, 137.947])
 # C2 = np.array([182.983, 114.219])
+
+IMG1 = "images/aprilgrid.png"
+IMG2 = "images/aprilgrid60.png"
+C1 = np.array([364.5, 67.5])
+C2 = np.array([470.68, 254.27])
 
 
 img1 = plt.imread(IMG1)
@@ -110,7 +145,7 @@ class DrawingState:
         tpatch = PATCH @ R(angle).T + self.center
         for circle, center in zip(self.circles, tpatch):
             circle.center = center
-        self.rot_circle.center = R(angle) @ [0, PATCH_SIZE] + self.center
+        self.rot_circle.center = R(angle) @ ROT_CIRCLE + self.center
 
         e0, e = E(self.angle), E(angle)
         l0, l = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
@@ -131,11 +166,23 @@ class DrawingState:
         new_angle = self.angle + delta
         self.redraw_angle(new_angle)
 
+    def iterate_angle_scipy(self, event) -> float:
+        from scipy.optimize import basinhopping
+
+        res = basinhopping(E, self.angle, minimizer_kwargs={"method": "L-BFGS-B"})
+        new_angle = res.x[0]
+        self.redraw_angle(new_angle)
+
+    lr = 0.1
+    momentum = 0.5
+    prev_delta = 0
+
     def iterate_angle_gd(self, event) -> float:
-        # TODO: Implement momentum
-        lr = 0.1
-        new_angle = self.angle + lr * J_E(self.angle) * self.angle
-        # new_angle = self.angle + lr * J_E(self.angle) * self.angle
+        for i in range(100):
+            delta = self.lr * J_E(self.angle) - self.momentum * self.prev_delta
+            new_angle = self.angle - delta
+            self.prev_delta = delta
+            print(f"{J_E(self.angle)=:.5f}, {delta=:.5f}")
         self.redraw_angle(new_angle)
 
 
@@ -217,7 +264,7 @@ def main():
     freq_slider = Slider(ax=axangle, label="Angle θ", valmin=-pi, valmax=pi, valinit=0)
     freq_slider.on_changed(drawing.redraw_angle)
 
-    axchecks = drawing.fig.add_axes([0.025, 0.15, 0.1, 0.2])
+    axchecks = drawing.fig.add_axes([0.025, 0.25, 0.1, 0.2])
     check_labels = ["None", "Sample", "Grad", "Reference", "Residual"]
     actives = [True] + [False] * (len(check_labels) - 1)
     check = CheckButtons(ax=axchecks, labels=check_labels, actives=actives)
@@ -236,6 +283,10 @@ def main():
     axtext = drawing.fig.add_axes([0.2, 0.85, 0.2, 0.1])
     drawing.text = axtext.text(0, 0.5, "E(θ=___)=___", ha="left", va="bottom")
     axtext.axis("off")
+
+    axscipy = drawing.fig.add_axes([0.025, 0.145, 0.1, 0.05])
+    btnscipy = Button(axscipy, "Scipy")
+    btnscipy.on_clicked(drawing.iterate_angle_scipy)
 
     axgd = drawing.fig.add_axes([0.025, 0.085, 0.1, 0.05])
     btngd = Button(axgd, "Step GD")
