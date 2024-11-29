@@ -13,13 +13,15 @@ from matplotlib.widgets import Slider, Button, CheckButtons
 from scipy.optimize import brute, differential_evolution
 import PIL.Image
 
-from bilinterp import interp, interp_grad, intensity
+from bilinterp import batch_interp, batch_interp_grad
 
 type Vector2 = np.ndarray
 type VectorN = np.ndarray
 type Image = np.ndarray
 type MatrixNx2 = np.ndarray
 type Matrix2x2 = np.ndarray
+
+zeros_f32 = lambda n: np.zeros(n, dtype=np.float32)
 
 
 def get_square_patch(patch_size=10):
@@ -75,6 +77,7 @@ EXAMPLES = [
 ZOOM_PAD = 32
 IMG1, IMG2, C1, C2 = EXAMPLES[0]
 PATCH, ROT_CIRCLE = get_square_patch()
+N = PATCH.shape[0]
 
 img1 = plt.imread(IMG1)
 img2 = plt.imread(IMG2)
@@ -121,43 +124,32 @@ class DrawingState:
         self.update_fill()
 
     def update_fill(self):
+        centers = np.array([circle.center for circle in self.circles])
+        valdxdys = zeros_f32((N, 3))
+        batch_interp_grad(self.img_raw, centers[:, 0], centers[:, 1], out=valdxdys)
+        colors, dxs, dys = valdxdys[:, 0], valdxdys[:, 1], valdxdys[:, 2]
         if self.fill == "Sample":
-            for circle in self.circles:
-                color = interp(self.img_raw, circle.center[0], circle.center[1])
+            for circle, color in zip(self.circles, colors):
                 circle.set_facecolor(f"{color}")
         if self.fill == "Grad":
-            for circle in self.circles:
-                grad: Vector2 = np.array([0, 0], dtype=np.float32)
-                color = interp_grad(
-                    self.img_raw, circle.center[0], circle.center[1], grad
-                )
-                grad = grad / 2 + 0.5  # Normalize from [-1, 1] to [0, 1]
-                # circle.set_facecolor((grad[0], grad[1], color))
-                circle.set_facecolor((grad[0], grad[1], 0.0))
+            s = lambda x: (1 / (1 + e ** -(50 * (x - 0.5))))  # Push to edges
+            f = lambda x: s(x / 2 + 0.5)  # Map [-1, 1] to [0, 1]
+            for circle, dx, dy in zip(self.circles, dxs, dys):
+                circle.set_facecolor((f(dx), f(dy), 0))
         if self.fill == "Reference":
-            for circle in self.circles:
-                center2 = circle.center
-                center1 = R(self.angle).T @ (center2 - C2) + C1
-                # color2 = interp(img2_raw, center2[0], center2[1])
-                color1 = interp(img1_raw, center1[0], center1[1])
+            ref_centers = PATCH + C1
+            colors1 = zeros_f32(N)
+            batch_interp(img1_raw, ref_centers[:, 0], ref_centers[:, 1], out=colors1)
+            for circle, color1 in zip(self.circles, colors1):
                 circle.set_facecolor(f"{color1}")
         elif self.fill == "Residual":
-            min_diff = -0.1
-            max_diff = 0.1
-            diffs = [0] * len(self.circles)
-            for i, circle in enumerate(self.circles):
-                center2 = circle.center
-                center1 = R(self.angle).T @ (center2 - C2) + C1
-                color2 = interp(img2_raw, center2[0], center2[1])
-                color1 = interp(img1_raw, center1[0], center1[1])
-                diff = color1 - color2
-                min_diff = min(min_diff, diff)
-                max_diff = max(max_diff, diff)
-                diffs[i] = diff
+            ref_centers = PATCH + C1
+            colors1 = zeros_f32(N)
+            batch_interp(img1_raw, ref_centers[:, 0], ref_centers[:, 1], out=colors1)
+            diffs = colors1 - colors
+            assert diffs.max() < 1 and diffs.min() > -1, f"{diffs.max=}, {diffs.min=}"
             for diff, circle in zip(diffs, self.circles):
-                v = abs(diff / max_diff) if diff >= 0 else -abs(diff / min_diff)
-                v = v / 2 + 0.5
-                circle.set_facecolor(colormaps["PiYG"](v))
+                circle.set_facecolor(colormaps["PiYG"](diff / 2 + 0.5))
 
     def redraw_angle(self, angle):
         tpatch = PATCH @ R(angle).T + self.center
@@ -191,14 +183,9 @@ class DrawingState:
         self.redraw_angle(new_angle)
 
     def iterate_angle_scipy(self, _) -> float:
-        # Brute global optimization (15ms for 100 iterations)
-        res = brute(E, ((-pi, pi),), Ns=360, full_output=True, finish=None)
-        new_angle = res[0]
-
-        # Differential evolution global optimization (15ms)
-        # res = differential_evolution(E, [(-pi, pi)], disp=True)
-        # new_angle = res.x[0]
-
+        # Global optimization
+        # new_angle = differential_evolution(E, [(-pi, pi)]).x[0] # ~5ms
+        new_angle = brute(E, ((-pi, pi),), Ns=100, finish=None)  # ~5ms for Ns=100
         self.redraw_angle(new_angle)
 
     lr = 0.1
@@ -269,19 +256,15 @@ def J_R(angle: float) -> Matrix2x2:
     return np.array([[-sin(angle), -cos(angle)], [cos(angle), -sin(angle)]])
 
 
-def J_r(angle) -> VectorN:
-    N = PATCH.shape[0]
-    rows = []
+def J_r(angle: float) -> VectorN:
     R_deriv: Matrix2x2 = J_R(angle)
-    for i in range(N):
-        point: Vector2 = PATCH[i]
-        I_deriv: Vector2 = np.array([0, 0], dtype=np.float32)
-        tpoint = R(angle) @ point + C2
-        interp_grad(img2_raw, tpoint[0], tpoint[1], I_deriv)
-        row = -I_deriv @ R_deriv @ point
-        rows.append(row)
-    rows = np.array(rows)
-    return rows
+    tpoints = PATCH @ R(angle).T + C2
+    valdxdys = zeros_f32((N, 3))
+    batch_interp_grad(img2_raw, tpoints[:, 0], tpoints[:, 1], out=valdxdys)
+    I_deriv = valdxdys[:, 1:3]
+    derivs = I_deriv @ R_deriv
+    res = np.einsum("ij,ij->i", derivs, PATCH)  # Perform dot product on each row
+    return -res
 
 
 def r_lin(angle_0: float, angle: float) -> VectorN:
@@ -295,8 +278,10 @@ def E_lin(angle_0: float, angle: float) -> float:
 def r(angle: float) -> VectorN:
     tpatch1 = PATCH + C1
     tpatch2 = PATCH @ R(angle).T + C2
-    i1 = np.array([interp(img1_raw, p[0], p[1]) for p in tpatch1])
-    i2 = np.array([interp(img2_raw, p[0], p[1]) for p in tpatch2])
+    i1 = zeros_f32(N)
+    i2 = zeros_f32(N)
+    batch_interp(img1_raw, tpatch1[:, 0], tpatch1[:, 1], out=i1)
+    batch_interp(img2_raw, tpatch2[:, 0], tpatch2[:, 1], out=i2)
     return i1 - i2
 
 
@@ -332,6 +317,8 @@ def make_drawing(
 
 
 def main():
+    np.set_printoptions(precision=4, suppress=True)
+
     make_drawing(IMG1, C1)
 
     # Unused variable to keep alive the UI
