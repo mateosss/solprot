@@ -73,7 +73,7 @@ EXAMPLES = [
 # fmt: on
 
 ZOOM_PAD = 32
-IMG1, IMG2, C1, C2 = EXAMPLES[3]
+IMG1, IMG2, C1, C2 = EXAMPLES[0]
 PATCH, ROT_CIRCLE = get_square_patch()
 
 img1 = plt.imread(IMG1)
@@ -93,6 +93,19 @@ class DrawingState:
     center: Vector2
     angle: float
     fill: str = "None"
+
+    _slider: Slider = None
+    _slider_ax: plt.Axes = None
+    _checks: CheckButtons = None
+    _checks_ax: plt.Axes = None
+    _text: plt.Text = None
+    _text_ax: plt.Axes = None
+    _btn_scipy: Button = None
+    _btn_scipy_ax: plt.Axes = None
+    _btn_gd: Button = None
+    _btn_gd_ax: plt.Axes = None
+    _btn_gn: Button = None
+    _btn_gn_ax: plt.Axes = None
 
     def set_fill(self, fill: str):
         if fill == "None":
@@ -156,15 +169,14 @@ class DrawingState:
         l0, l = E_lin(self.angle, self.angle), E_lin(self.angle, angle)
         a0, a = self.angle, angle
 
-        Jr = J_r(angle)
-        Jr_pinv = Jr / (Jr @ Jr)  # moore-penrose pseudoinverse
-        delta = -Jr_pinv @ r(angle)
-        delta_gd = J_E(self.angle)
-
-        delta_numeric = (E(self.angle + pi/180) - E(self.angle - pi/180)) / (2 * pi/180)
-        self.text.set_text(
-            f"E(θ={a:.2f})={er:.2f} <- NEW | LIN -> El(θ={a:.2f})={l:.2f} | next dθ[GN] = {delta:2f}\n"
-            f"E(θ={a0:.2f})={er0:.2f} <- OLD | LIN -> El(θ={a0:.2f})={l0:.2f} | next dθ[GD] = {delta_gd:.2f} | next dθ[NUM] = {delta_numeric:.2f}\n"
+        h = np.float64(0.001 * (2 * pi / 360))
+        d_analytic = J_E(self.angle)
+        d_numeric = (E(self.angle + h / 2) - E(self.angle - h / 2)) / h
+        d_diff = np.linalg.norm(d_analytic - d_numeric)
+        self._text.set_text(
+            f"E(θ={a:.2f})={er:.2f} <- NEW | LIN -> El(θ={a:.2f})={l:.2f}\n"
+            f"E(θ={a0:.2f})={er0:.2f} <- OLD | LIN -> El(θ={a0:.2f})={l0:.2f}\n"
+            f"{d_analytic=:.4f} | {d_numeric=:.4f} | {d_diff=:.4f}"
         )
 
         self.angle = angle
@@ -180,7 +192,7 @@ class DrawingState:
 
     def iterate_angle_scipy(self, _) -> float:
         # Brute global optimization (15ms for 100 iterations)
-        res = brute(E, ((-pi, pi),), Ns=100, full_output=True, finish=None)
+        res = brute(E, ((-pi, pi),), Ns=360, full_output=True, finish=None)
         new_angle = res[0]
 
         # Differential evolution global optimization (15ms)
@@ -197,8 +209,56 @@ class DrawingState:
         delta = self.lr * J_E(self.angle) - self.momentum * self.prev_delta
         new_angle = self.angle - delta
         self.prev_delta = delta
-        print(f"{J_E(self.angle)=:.5f}, {delta=:.5f}")
         self.redraw_angle(new_angle)
+
+    def setup_ui(self):
+        ax = self.fig.add_axes([0.25, 0.025, 0.55, 0.03])
+        slider = Slider(ax=ax, label="Angle θ", valmin=-pi, valmax=pi, valinit=0)
+        slider.on_changed(self.redraw_angle)
+        self._slider = slider
+        self._slider_ax = ax
+
+        ax = self.fig.add_axes([0.025, 0.25, 0.1, 0.2])
+        check_labels = ["None", "Sample", "Grad", "Reference", "Residual"]
+        actives = [True] + [False] * (len(check_labels) - 1)
+        checks = CheckButtons(ax=ax, labels=check_labels, actives=actives)
+
+        def check_cb(label):
+            print(f"Checked {label}")
+            checks.eventson = False
+            checks.clear()
+            checks.set_active(check_labels.index(label))
+            self.set_fill(label)
+            self.fig.canvas.draw_idle()
+            checks.eventson = True
+
+        checks.on_clicked(check_cb)
+        self._checks = checks
+        self._checks_ax = ax
+
+        ax = self.fig.add_axes([0.2, 0.85, 0.2, 0.1])
+        text = ax.text(0, 0.5, "Awaiting for first E(θ)", ha="left", va="bottom")
+        ax.axis("off")
+        self._text = text
+        self._text_ax = ax
+
+        ax = self.fig.add_axes([0.025, 0.145, 0.1, 0.05])
+        btn = Button(ax, "Scipy")
+        btn.on_clicked(self.iterate_angle_scipy)
+        self._btn_scipy = btn
+        self._btn_scipy_ax = ax
+
+        ax = self.fig.add_axes([0.025, 0.085, 0.1, 0.05])
+        btn = Button(ax, "Step GD")
+        btn.on_clicked(self.iterate_angle_gd)
+        self._btn_gd = btn
+        self._btn_gd_ax = ax
+
+        ax = self.fig.add_axes([0.025, 0.025, 0.1, 0.05])
+        btn = Button(ax, "Step GN")
+        btn.on_clicked(self.iterate_angle_gn)
+        self._btn_gn = btn
+        self._btn_gn_ax = ax
 
 
 def R(angle: float) -> Matrix2x2:
@@ -212,13 +272,13 @@ def J_R(angle: float) -> Matrix2x2:
 def J_r(angle) -> VectorN:
     N = PATCH.shape[0]
     rows = []
+    R_deriv: Matrix2x2 = J_R(angle)
     for i in range(N):
         point: Vector2 = PATCH[i]
-        R_deriv: Matrix2x2 = J_R(angle)
         I_deriv: Vector2 = np.array([0, 0], dtype=np.float32)
-        tpoint = R(angle) @ point
+        tpoint = R(angle) @ point + C2
         interp_grad(img2_raw, tpoint[0], tpoint[1], I_deriv)
-        row = I_deriv @ R_deriv @ point
+        row = -I_deriv @ R_deriv @ point
         rows.append(row)
     rows = np.array(rows)
     return rows
@@ -248,7 +308,9 @@ def J_E(angle: float) -> float:
     return 2 * (r(angle) @ J_r(angle))
 
 
-def make_drawing(img_file: str, c: Vector2, angle: float) -> DrawingState:
+def make_drawing(
+    img_file: str, c: Vector2, angle: float = 0, setup_ui: bool = False
+) -> DrawingState:
     img = plt.imread(img_file)
     img_raw = np.array(PIL.Image.open(img_file))
     fig, ax = plt.subplots()
@@ -264,52 +326,16 @@ def make_drawing(img_file: str, c: Vector2, angle: float) -> DrawingState:
     rot_circle = plt.Circle(R(angle) @ ROT_CIRCLE + c, 0.5, **circle_kwargs)
     ax.add_patch(rot_circle)
     state = DrawingState(fig, ax, img, img_raw, circles, rot_circle, c, angle)
+    if setup_ui:
+        state.setup_ui()
     return state
 
 
 def main():
-    make_drawing(IMG1, C1, 0)
+    make_drawing(IMG1, C1)
 
-    # Reference patch
-    angle = pi / 6
-    drawing = make_drawing(IMG2, C2, angle)
-
-    # Optimized patch
-    axangle = drawing.fig.add_axes([0.25, 0.025, 0.55, 0.03])
-    freq_slider = Slider(ax=axangle, label="Angle θ", valmin=-pi, valmax=pi, valinit=0)
-    freq_slider.on_changed(drawing.redraw_angle)
-
-    axchecks = drawing.fig.add_axes([0.025, 0.25, 0.1, 0.2])
-    check_labels = ["None", "Sample", "Grad", "Reference", "Residual"]
-    actives = [True] + [False] * (len(check_labels) - 1)
-    check = CheckButtons(ax=axchecks, labels=check_labels, actives=actives)
-
-    def check_cb(label):
-        print(f"Checked {label}")
-        check.eventson = False
-        check.clear()
-        check.set_active(check_labels.index(label))
-        drawing.set_fill(label)
-        drawing.fig.canvas.draw_idle()
-        check.eventson = True
-
-    check.on_clicked(check_cb)
-
-    axtext = drawing.fig.add_axes([0.2, 0.85, 0.2, 0.1])
-    drawing.text = axtext.text(0, 0.5, "E(θ=___)=___", ha="left", va="bottom")
-    axtext.axis("off")
-
-    axscipy = drawing.fig.add_axes([0.025, 0.145, 0.1, 0.05])
-    btnscipy = Button(axscipy, "Scipy")
-    btnscipy.on_clicked(drawing.iterate_angle_scipy)
-
-    axgd = drawing.fig.add_axes([0.025, 0.085, 0.1, 0.05])
-    btngd = Button(axgd, "Step GD")
-    btngd.on_clicked(drawing.iterate_angle_gd)
-
-    axgn = drawing.fig.add_axes([0.025, 0.025, 0.1, 0.05])
-    btngn = Button(axgn, "Step GN")
-    btngn.on_clicked(drawing.iterate_angle_gn)
+    # Unused variable to keep alive the UI
+    drawing = make_drawing(IMG2, C2, setup_ui=True)  # pylint: disable=unused-variable
 
     plt.show()
 
