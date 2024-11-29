@@ -52,7 +52,7 @@ def get_squared_patch_log_condensed(PATCH_RADIUS_P=3, patch_radius_px=10):
     return patch, rot_circle
 
 
-def get_circle_patch(RADIUS=5, ANGLES=6, SCALE=2):
+def get_circle_patch(RADIUS=3, ANGLES=6, SCALE=1):
     "Circle patch"
     patch = np.array(
         [
@@ -71,12 +71,15 @@ EXAMPLES = [
     ("images/img1.png", "images/img2.png", np.array([222.919, 137.575]), np.array([513.16, 168.145])),
     ("images/aprilgrid.png", "images/aprilgrid15.png", np.array([148.775, 137.947]), np.array([182.983, 114.219])),
     ("images/aprilgrid.png", "images/aprilgrid60.png", np.array([364.5, 67.5]), np.array([470.68, 254.27])),
+    ("images/MOO11A.png", "images/MOO11B.png", np.array([106.243, 331.75]), np.array([599.882, 313.076])),
+    ("images/MOO11A.png", "images/MOO11B.png", np.array([18.012, 322.084]), np.array([487.170, 283.607])),
+    ("images/MOO11A.png", "images/MOO11B.png", np.array([98.677, 266.376]), np.array([551.531, 234.406])),
 ]
 # fmt: on
 
 ZOOM_PAD = 32
 IMG1, IMG2, C1, C2 = EXAMPLES[0]
-PATCH, ROT_CIRCLE = get_square_patch()
+PATCH, ROT_CIRCLE = get_circle_patch()
 N = PATCH.shape[0]
 
 img1 = plt.imread(IMG1)
@@ -191,14 +194,14 @@ class DrawingState:
         self.redraw_angle(new_angle)
 
     def iterate_global_opt(self, _) -> float:
-        DIVS = 18
-        STEPS = 10
+        DIVS = 8
+        STEPS = 5
 
         angles = np.linspace(0, 2 * pi, DIVS, endpoint=False)
         minerr_a = 0
         minerr = float("inf")
         for a in angles:
-            for _ in range(STEPS): # GN iteration
+            for _ in range(STEPS):  # GN iteration
                 Jr = J_r(a)
                 Jr_pinv = Jr / (Jr @ Jr)
                 delta = -Jr_pinv @ r(a)
