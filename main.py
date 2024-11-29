@@ -133,8 +133,12 @@ class DrawingState:
         valdxdys = zeros_f32((N, 3))
         batch_interp_grad(self.img_raw, centers[:, 0], centers[:, 1], out=valdxdys)
         colors, dxs, dys = valdxdys[:, 0], valdxdys[:, 1], valdxdys[:, 2]
+        colors /= colors.mean()
         if self.fill == "Sample":
+            a = colors.min()  # minimum mean-normalized color
+            b = colors.max()  # maximum mean-normalized color
             for circle, color in zip(self.circles, colors):
+                color = (color - a) / (b - a)  # minmax-normalized color
                 circle.set_facecolor(f"{color}")
         if self.fill == "Grad":
             s = lambda x: (1 / (1 + e ** -(50 * (x - 0.5))))  # Push to edges
@@ -145,12 +149,21 @@ class DrawingState:
             ref_centers = PATCH + C1
             colors1 = zeros_f32(N)
             batch_interp(img1_raw, ref_centers[:, 0], ref_centers[:, 1], out=colors1)
+            colors1 /= colors1.mean()
+            a = colors1.min()  # minimum mean-normalized color
+            b = colors1.max()  # maximum mean-normalized color
             for circle, color1 in zip(self.circles, colors1):
+                color1 = (color1 - a) / (b - a)  # minmax-normalized color
                 circle.set_facecolor(f"{color1}")
         elif self.fill == "Residual":
             ref_centers = PATCH + C1
             colors1 = zeros_f32(N)
             batch_interp(img1_raw, ref_centers[:, 0], ref_centers[:, 1], out=colors1)
+            colors1 /= colors1.mean()
+            a1, b1 = colors1.min(), colors1.max()
+            a2, b2 = colors.min(), colors.max()
+            colors1 = (colors1 - a1) / (b1 - a1)
+            colors = (colors - a2) / (b2 - a2)
             diffs = colors1 - colors
             assert diffs.max() < 1 and diffs.min() > -1, f"{diffs.max=}, {diffs.min=}"
             for diff, circle in zip(diffs, self.circles):
@@ -294,7 +307,8 @@ def J_r(angle: float) -> VectorN:
     I_deriv = valdxdys[:, 1:3]
     derivs = I_deriv @ R_deriv
     res = np.einsum("ij,ij->i", derivs, PATCH)  # Perform dot product on each row
-    return -res
+    constant = -1 / valdxdys[:, 0].mean()
+    return constant * res
 
 
 def r_lin(angle_0: float, angle: float) -> VectorN:
@@ -312,6 +326,8 @@ def r(angle: float) -> VectorN:
     i2 = zeros_f32(N)
     batch_interp(img1_raw, tpatch1[:, 0], tpatch1[:, 1], out=i1)
     batch_interp(img2_raw, tpatch2[:, 0], tpatch2[:, 1], out=i2)
+    i1 /= i1.mean()
+    i2 /= i2.mean()
     return i1 - i2
 
 
