@@ -103,6 +103,8 @@ class DrawingState:
     _checks_ax: plt.Axes = None
     _text: plt.Text = None
     _text_ax: plt.Axes = None
+    _btn_global: Button = None
+    _btn_global_ax: plt.Axes = None
     _btn_scipy: Button = None
     _btn_scipy_ax: plt.Axes = None
     _btn_gd: Button = None
@@ -185,8 +187,27 @@ class DrawingState:
     def iterate_angle_scipy(self, _) -> float:
         # Global optimization
         # new_angle = differential_evolution(E, [(-pi, pi)]).x[0] # ~5ms
-        new_angle = brute(E, ((-pi, pi),), Ns=100, finish=None)  # ~5ms for Ns=100
+        new_angle = brute(E, ((-pi, pi),), Ns=360, finish=None)  # ~5ms for Ns=100
         self.redraw_angle(new_angle)
+
+    def iterate_global_opt(self, _) -> float:
+        DIVS = 18
+        STEPS = 10
+
+        angles = np.linspace(0, 2 * pi, DIVS, endpoint=False)
+        minerr_a = 0
+        minerr = float("inf")
+        for a in angles:
+            for _ in range(STEPS): # GN iteration
+                Jr = J_r(a)
+                Jr_pinv = Jr / (Jr @ Jr)
+                delta = -Jr_pinv @ r(a)
+                a += delta
+            err = E(a)
+            if err < minerr:
+                minerr = err
+                minerr_a = a
+        self.redraw_angle(minerr_a)
 
     lr = 0.1
     momentum = 0.5
@@ -205,7 +226,7 @@ class DrawingState:
         self._slider = slider
         self._slider_ax = ax
 
-        ax = self.fig.add_axes([0.025, 0.25, 0.1, 0.2])
+        ax = self.fig.add_axes([0.025, 0.3, 0.1, 0.2])
         check_labels = ["None", "Sample", "Grad", "Reference", "Residual"]
         actives = [True] + [False] * (len(check_labels) - 1)
         checks = CheckButtons(ax=ax, labels=check_labels, actives=actives)
@@ -228,6 +249,12 @@ class DrawingState:
         ax.axis("off")
         self._text = text
         self._text_ax = ax
+
+        ax = self.fig.add_axes([0.025, 0.205, 0.1, 0.05])
+        btn = Button(ax, "Global")
+        btn.on_clicked(self.iterate_global_opt)
+        self._btn_global = btn
+        self._btn_global_axx = ax
 
         ax = self.fig.add_axes([0.025, 0.145, 0.1, 0.05])
         btn = Button(ax, "Scipy")
