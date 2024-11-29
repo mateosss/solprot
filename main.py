@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
-# https://answers.opencv.org/question/232700/calculate-orb-descriptors-for-arbitrary-image-points/
+# Copyright 2024, Technical University of Munich
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Author: Mateo de Mayo <mateo.demayo@tum.de>
+
+# TODO: Try? https://answers.opencv.org/question/232700/calculate-orb-descriptors-for-arbitrary-image-points/
 
 from math import pi, sin, cos, e
 from dataclasses import dataclass
@@ -52,7 +56,7 @@ def get_squared_patch_log_condensed(PATCH_RADIUS_P=3, patch_radius_px=10):
     return patch, rot_circle
 
 
-def get_circle_patch(RADIUS=3, ANGLES=6, SCALE=1):
+def get_circle_patch(RADIUS=5, ANGLES=6, SCALE=1):
     "Circle patch"
     patch = np.array(
         [
